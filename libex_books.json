@@ -1,0 +1,279 @@
+{
+  "meta": {
+    "source": "https://www.libex.ru/cat/fiction/",
+    "total_books": 36,
+    "start_page": 0,
+    "end_page": "last",
+    "fetched_pages": null
+  },
+  "books": [
+    {
+      "detail_url": "https://www.libex.ru/detail/book1254730.html",
+      "author": "Чехов, Антон Павлович",
+      "title": "Моя жизнь",
+      "year": 2013,
+      "publisher": "М.: Рипол Классик",
+      "series": "Pocket Classic"
+    },
+    {
+      "detail_url": "https://www.libex.ru/detail/book1254728.html",
+      "author": "Тоулз, Амор",
+      "title": "Джентльмен в Москве",
+      "year": 2024,
+      "publisher": "М.: Эксмо-Пресс"
+    },
+    {
+      "detail_url": "https://www.libex.ru/detail/book1254723.html",
+      "author": "Плотников, П.П.",
+      "title": "Воспоминания сталинградского студента",
+      "year": 2005,
+      "publisher": "Перемена"
+    },
+    {
+      "detail_url": "https://www.libex.ru/detail/book1254719.html",
+      "author": "Фагиаш, Мария",
+      "title": "Лейтенант и его судья. Сестры-близнецы. Танец убийц. В 3 томах",
+      "year": 2008,
+      "publisher": "Екатеринбург: У-Фактория"
+    },
+    {
+      "detail_url": "https://www.libex.ru/detail/book1254715.html",
+      "author": "Уайт, Лорет Энн",
+      "title": "Самые темные дороги",
+      "year": 2024,
+      "publisher": "М.: Эксмо",
+      "series": "Высшая лига детектива"
+    },
+    {
+      "detail_url": "https://www.libex.ru/detail/book1254714.html",
+      "author": "Солоухин, Владимир",
+      "title": "Олепинские пруды",
+      "year": 1978,
+      "publisher": "Современник"
+    },
+    {
+      "detail_url": "https://www.libex.ru/detail/book1254712.html",
+      "author": "Крамов, И.",
+      "title": "Литературные портреты",
+      "year": 1976,
+      "publisher": "М.: Художественная литература"
+    },
+    {
+      "detail_url": "https://www.libex.ru/detail/book1254709.html",
+      "author": "Бровка, Петрусь",
+      "title": "Пишу о сердце",
+      "year": 1974,
+      "publisher": "Молодая гвардия"
+    },
+    {
+      "detail_url": "https://www.libex.ru/detail/book1254705.html",
+      "author": "Аксельссон, Майгулль",
+      "title": "Я, которой не было",
+      "year": 2008,
+      "publisher": "М.: Иностранка",
+      "series": "Серебро"
+    },
+    {
+      "detail_url": "https://www.libex.ru/detail/book1254703.html",
+      "author": "Шейнин, Лев Романович",
+      "title": "Записки следователя. Особое задание",
+      "year": 2023,
+      "publisher": "Престиж Бук",
+      "series": "РПБиНФ"
+    },
+    {
+      "detail_url": "https://www.libex.ru/detail/book1254700.html",
+      "author": "Бажин, А.И.",
+      "title": "Герои земли Тюменской",
+      "year": 2023,
+      "publisher": "Тюмень: Вектор Бук"
+    },
+    {
+      "detail_url": "https://www.libex.ru/detail/book1254699.html",
+      "author": "Мозес Кор, Ева",
+      "title": "Близнецы Освенцима. Правдивая история близнецов доктора Менгеле",
+      "year": 2024,
+      "publisher": "М.: АСТ",
+      "series": "Холокост. Правдивая история"
+    },
+    {
+      "detail_url": "https://www.libex.ru/detail/book1254694.html",
+      "author": "Кинг, С.",
+      "title": "Нужные вещи",
+      "year": 2026,
+      "publisher": "М.: АСТ",
+      "series": "Кинг: книжная полка"
+    },
+    {
+      "detail_url": "https://www.libex.ru/detail/book1254692.html",
+      "author": "Сент-Экзюпери, Антуан Де",
+      "title": "Маленький принц",
+      "year": 2020,
+      "publisher": "М.: Мартин",
+      "series": "Малая избранная классика (New)"
+    },
+    {
+      "detail_url": "https://www.libex.ru/detail/book1254691.html",
+      "author": "Киплинг, Редьярд Джозеф",
+      "title": "Призрак в желтой коляске",
+      "year": 2023,
+      "publisher": "М.: Текст",
+      "series": "Это фантастика!"
+    },
+    {
+      "detail_url": "https://www.libex.ru/detail/book1254690.html",
+      "author": "Шекспир, Уильям",
+      "title": "Король Лир. Трагедия о Кориолане",
+      "year": 2018,
+      "publisher": "Азбука, Азбука-Аттикус",
+      "series": "Азбука-классика"
+    },
+    {
+      "detail_url": "https://www.libex.ru/detail/book1254689.html",
+      "author": "Пушкин, Александр Сергеевич",
+      "title": "Лирика",
+      "year": 2019,
+      "publisher": "СПб: Речь",
+      "series": "Малая классика Речи"
+    },
+    {
+      "detail_url": "https://www.libex.ru/detail/book1254685.html",
+      "author": "По, Эдгар Аллан",
+      "title": "Золотой жук",
+      "year": 2022,
+      "publisher": "М.: Эксмо-классика",
+      "series": "Всемирная литература (с картинкой)"
+    },
+    {
+      "detail_url": "https://www.libex.ru/detail/book1254682.html",
+      "author": "Селиванов, Ф.",
+      "title": "Ласковое сердце",
+      "year": 1967,
+      "publisher": "М.: ДОСААФ",
+      "series": "Молодежи о героях и подвигах"
+    },
+    {
+      "detail_url": "https://www.libex.ru/detail/book1254678.html",
+      "author": "Померанцев, В.",
+      "title": "Своим судом",
+      "year": 1986,
+      "publisher": "Иркутск: Восточно-Сибирское"
+    },
+    {
+      "detail_url": "https://www.libex.ru/detail/book1254677.html",
+      "author": "Утков, Г.Г.",
+      "title": "О том, что не забыто",
+      "year": 2024,
+      "publisher": "М.: Буки Веди"
+    },
+    {
+      "detail_url": "https://www.libex.ru/detail/book1254673.html",
+      "author": "Булычев, Кир",
+      "title": "Последняя война",
+      "year": 2017,
+      "publisher": "Москва Издательский дом Мещерякова",
+      "series": "Большое иллюстрированное собрание сочинений"
+    },
+    {
+      "detail_url": "https://www.libex.ru/detail/book1254672.html",
+      "author": "Булычев, Кир",
+      "title": "Пленники долга",
+      "year": 2018,
+      "publisher": "Москва Издательский дом Мещерякова",
+      "series": "Большое иллюстрированное собрание сочинений"
+    },
+    {
+      "detail_url": "https://www.libex.ru/detail/book1254668.html",
+      "author": "Сидоровская, Лариса",
+      "title": "Я люблю тебя. Стихотворения",
+      "year": 1991,
+      "publisher": "Л.: ВВМУ им. Фрунзе"
+    },
+    {
+      "detail_url": "https://www.libex.ru/detail/book1254667.html",
+      "author": "Франкл",
+      "title": "То, чего нет в моих книгах: Воспоминания",
+      "year": 2025,
+      "publisher": "Альпина"
+    },
+    {
+      "detail_url": "https://www.libex.ru/detail/book1254666.html",
+      "author": "Быков, Василь",
+      "title": "Долгая дорога домой",
+      "year": 2019,
+      "publisher": "ПРОЗАиК"
+    },
+    {
+      "detail_url": "https://www.libex.ru/detail/book1254664.html",
+      "author": "ред. Петров, В.С.",
+      "title": "Серебряный век. Символисты",
+      "year": 2001,
+      "publisher": "Ростов н/Д: Феникс"
+    },
+    {
+      "detail_url": "https://www.libex.ru/detail/book1254663.html",
+      "author": "ред. Инькова, Л.М.",
+      "title": "Архитектор библиотечной системы. Памяти Василия Васильевича Серова (1931-2000)",
+      "year": 2012,
+      "publisher": "Пашков дом"
+    },
+    {
+      "detail_url": "https://www.libex.ru/detail/book1254662.html",
+      "author": "Колодный, Лев",
+      "title": "Кто написал Тихий Дон",
+      "year": 2015,
+      "publisher": "М.: Алгоритм"
+    },
+    {
+      "detail_url": "https://www.libex.ru/detail/book1254657.html",
+      "author": "Шагин, Антон",
+      "title": "Ее. Стихи Антон Шагин",
+      "year": 2014,
+      "publisher": "М.: У Никитских ворот"
+    },
+    {
+      "detail_url": "https://www.libex.ru/detail/book1254656.html",
+      "author": "Харитонов, Михаил",
+      "title": "Подлинная история Баскервильского чудовища",
+      "year": 2024,
+      "publisher": "М.: Городец"
+    },
+    {
+      "detail_url": "https://www.libex.ru/detail/book1254633.html",
+      "author": "ред. Биткеева, А.Н.",
+      "title": "Памятники фольклора монгольских народов. В 10 томах",
+      "year": 2023,
+      "publisher": "М.: ИМЛИ РАН"
+    },
+    {
+      "detail_url": "https://www.libex.ru/detail/book1254620.html",
+      "author": "Золотько, Александр",
+      "title": "Игра втемную",
+      "year": 1997,
+      "publisher": "Харьков: Фолио",
+      "series": "Детективная серия \"Кобра\""
+    },
+    {
+      "detail_url": "https://www.libex.ru/detail/book1254619.html",
+      "author": "Майер, Стефани",
+      "title": "Гостья",
+      "year": 2008,
+      "publisher": "М.: АСТ"
+    },
+    {
+      "detail_url": "https://www.libex.ru/detail/book1254617.html",
+      "author": "Рэвис, Бет; Рааш, Сара",
+      "title": "Том 1. Ночь ведьмы",
+      "year": 2024,
+      "publisher": "Эксмо",
+      "series": "Young Adult. Охота на ведьм. В 2 томах"
+    },
+    {
+      "detail_url": "https://www.libex.ru/detail/book1254616.html",
+      "author": "Мотина, Ася",
+      "title": "Выпечка без глютена. Традиционные рецепты с веганским вариантом: от хлеба и пирогов до пряников и куличей",
+      "year": 2024,
+      "publisher": "Эксмо"
+    }
+  ]
+}
