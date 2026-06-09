@@ -236,18 +236,89 @@ def parse_libex_html(file_path):
     pagination = extract_pagination_info(content)
     
     return books, pagination
+def parse_page_range(page_range_str, total_pages=None):
+    """
+    Парсит строку диапазона страниц в список номеров страниц (0-based).
+    
+    Поддерживаемые форматы:
+        - "1-5" — страницы 1-5 (включительно)
+        - "1,3,5" — конкретные страницы
+        - "1-3,5,7-10" — смешанные диапазоны
+        - "all" — все страницы (требует total_pages)
+    
+    Args:
+        page_range_str (str): Строка с диапазоном страниц (1-based для пользователя).
+        total_pages (int, optional): Общее количество страниц для "all".
+    
+    Returns:
+        list: Отсортированный список уникальных номеров страниц (0-based).
+    
+    Raises:
+        ValueError: При некорректном формате.
+    """
+    if not page_range_str or page_range_str.lower() == 'all':
+        if total_pages is None:
+            raise ValueError("Для 'all' нужно знать total_pages")
+        return list(range(total_pages))
+    
+    pages = set()
+    parts = page_range_str.split(',')
+    
+    for part in parts:
+        part = part.strip()
+        if '-' in part:
+            # Диапазон: "1-5"
+            try:
+                start_str, end_str = part.split('-', 1)
+                start = int(start_str.strip())
+                end = int(end_str.strip())
+                if start < 1 or end < 1:
+                    raise ValueError("Номера страниц должны быть >= 1")
+                if start > end:
+                    raise ValueError(f"Начало диапазона ({start}) больше конца ({end})")
+                # Конвертируем в 0-based
+                pages.update(range(start - 1, end))
+            except ValueError as e:
+                if "invalid literal" in str(e):
+                    raise ValueError(f"Некорректный диапазон: '{part}'")
+                raise
+        else:
+            # Одиночная страница: "3"
+            try:
+                page_num = int(part)
+                if page_num < 1:
+                    raise ValueError("Номера страниц должны быть >= 1")
+                pages.add(page_num - 1)  # 0-based
+            except ValueError as e:
+                if "invalid literal" in str(e):
+                    raise ValueError(f"Некорректный номер страницы: '{part}'")
+                raise
+    
+    return sorted(pages)
+
+
 def crawl_libex(base_url, start_page=0, end_page=None, max_pages=None,
-                delay=REQUEST_DELAY, verbose=True):
+                page_range=None, delay=REQUEST_DELAY, verbose=True,
+                save_every=10, checkpoint_path='libex_books_checkpoint.json',
+                output_path=None, detail_urls_path='detail.txt'):
     """
     Обходит страницы каталога Libex.ru с поддержкой пагинации.
 
     Args:
         base_url (str): Базовый URL категории.
-        start_page (int): Начальная страница (0-based).
-        end_page (int): Конечная страница (не включая), если None — до последней.
+        start_page (int): Начальная страница (0-based). Игнорируется, если задан page_range.
+        end_page (int): Конечная страница (не включая), если None — до последней. Игнорируется, если задан page_range.
         max_pages (int): Максимальное количество страниц для обхода.
+        page_range (list): Список конкретных номеров страниц для обхода (0-based).
         delay (float): Задержка между запросами в секундах.
         verbose (bool): Выводить прогресс в stderr.
+        save_every (int): Сохранять промежуточный результат каждые N страниц.
+                          0 или None — отключить промежуточное сохранение.
+        checkpoint_path (str): Путь к файлу промежуточного сохранения.
+        output_path (str): Путь к финальному файлу (используется как шаблон имени
+                           для чекпоинта, если не указан checkpoint_path).
+        detail_urls_path (str): Путь к файлу со списком detail_url (обновляется
+                                при каждом чекпоинте и в самом конце).
 
     Returns:
         list: Полный список книг со всех страниц.
@@ -256,13 +327,74 @@ def crawl_libex(base_url, start_page=0, end_page=None, max_pages=None,
     total_pages_known = None
     fetched_pages = 0
 
-    page = start_page
+    # Определяем путь для чекпоинта: если не задан явно, формируем из output_path
+    if save_every and save_every > 0:
+        if checkpoint_path == 'libex_books_checkpoint.json' and output_path:
+            # Если пользователь не менял путь явно, но указал output_path —
+            # используем его как шаблон: <name>_checkpoint.json
+            import os
+            base, ext = os.path.splitext(output_path)
+            if base:
+                checkpoint_path = f'{base}_checkpoint{ext or ".json"}'
+
+    def _save_checkpoint(books_snapshot, pages_done, current_page_num):
+        """Вспомогательная функция для сохранения промежуточного результата."""
+        if not save_every or save_every <= 0:
+            return
+        try:
+            checkpoint_data = {
+                'meta': {
+                    'source': base_url,
+                    'total_books': len(books_snapshot),
+                    'fetched_pages': pages_done,
+                    'last_page': current_page_num,
+                    'is_checkpoint': True,
+                },
+                'books': books_snapshot,
+            }
+            # === Промежуточное сохранение JSON ОТКЛЮЧЕНО (закомментировано) ===
+            # with open(checkpoint_path, 'w', encoding='utf-8') as f:
+            #     json.dump(checkpoint_data, f, ensure_ascii=False, indent=2)
+            # Также обновляем файл со списком URL — перезаписываем целиком,
+            # чтобы при сбое не было дубликатов/пропусков
+            try:
+                save_detail_urls(books_snapshot, detail_urls_path, mode='w')
+            except OSError as e:
+                print(f'[Чекпоинт] Не удалось обновить {detail_urls_path}: {e}',
+                      file=sys.stderr)
+            if verbose:
+                print(f'[Чекпоинт] (JSON отключён) Сохранено {len(books_snapshot)} URL '
+                      f'после {pages_done} стр. → {detail_urls_path}',
+                      file=sys.stderr)
+        except OSError as e:
+            print(f'[Чекпоинт] Не удалось сохранить промежуточный результат: {e}',
+                  file=sys.stderr)
+
+    # Если задан page_range, используем его вместо последовательного обхода
+    if page_range is not None:
+        pages_to_fetch = page_range
+    else:
+        # Последовательный режим (как было)
+        pages_to_fetch = None
+        page = start_page
+    
     while True:
-        # Проверяем лимиты
-        if max_pages is not None and fetched_pages >= max_pages:
-            break
-        if end_page is not None and page >= end_page:
-            break
+        # Определяем следующую страницу для загрузки
+        if pages_to_fetch is not None:
+            # Режим по списку страниц
+            if fetched_pages >= len(pages_to_fetch):
+                break
+            page = pages_to_fetch[fetched_pages]
+            
+            # Проверяем max_pages
+            if max_pages is not None and fetched_pages >= max_pages:
+                break
+        else:
+            # Последовательный режим
+            if max_pages is not None and fetched_pages >= max_pages:
+                break
+            if end_page is not None and page >= end_page:
+                break
 
         # Формируем URL
         if page == 0:
@@ -298,6 +430,10 @@ def crawl_libex(base_url, start_page=0, end_page=None, max_pages=None,
         all_books.extend(books)
         fetched_pages += 1
 
+        # Промежуточное сохранение каждые save_every страниц
+        if save_every and save_every > 0 and fetched_pages % save_every == 0:
+            _save_checkpoint(all_books, fetched_pages, page + 1)
+
         if verbose:
             print(f'[Страница {page + 1}] Найдено книг: {len(books)} '
                   f'(всего: {len(all_books)})', file=sys.stderr)
@@ -324,6 +460,16 @@ def crawl_libex(base_url, start_page=0, end_page=None, max_pages=None,
         if delay > 0:
             time.sleep(delay)
 
+    # Финальное обновление файла со списком URL (на случай, если
+    # save_every=0 — промежуточных чекпоинтов не было, но ссылки нужны).
+    # Используем try/except, чтобы ошибка записи не маскировала успешный сбор данных.
+    if all_books:
+        try:
+            save_detail_urls(all_books, detail_urls_path, mode='w')
+        except OSError as e:
+            print(f'[Финал] Не удалось сохранить {detail_urls_path}: {e}',
+                  file=sys.stderr)
+
     return all_books
 def save_to_json(books, output_path):
     """
@@ -337,16 +483,19 @@ def save_to_json(books, output_path):
         json.dump(books, f, ensure_ascii=False, indent=2)
 
 
-def save_detail_urls(books, output_path):
+def save_detail_urls(books, output_path, mode='w'):
     """
     Сохраняет все detail_url из списка книг в текстовый файл,
     по одному URL на строку.
-    
+
     Args:
         books (list): Список книг.
         output_path (str): Путь к выходному текстовому файлу.
+        mode (str): Режим записи — 'w' (перезапись) или 'a' (дописывание).
     """
-    with open(output_path, 'w', encoding='utf-8') as f:
+    if mode not in ('w', 'a'):
+        raise ValueError(f"mode должен быть 'w' или 'a', получено: {mode!r}")
+    with open(output_path, mode, encoding='utf-8') as f:
         for book in books:
             url = book.get('detail_url')
             if url:
@@ -356,6 +505,7 @@ def save_detail_urls(books, output_path):
 def main():
     """Главная функция для запуска парсера."""
     import argparse
+    import os  # для os.path.exists / os.path.splitext
     
     parser = argparse.ArgumentParser(
         description='Парсер ссылок на товары с Libex.ru'
@@ -413,6 +563,39 @@ def main():
         help=f'Задержка между запросами в секундах (по умолчанию: {REQUEST_DELAY})'
     )
     parser.add_argument(
+        '--page-range',
+        type=str,
+        default=None,
+        help='Диапазон страниц для загрузки. Форматы: "1-5", "1,3,5", "1-3,5,7-10", "all". Нумерация с 1.'
+    )
+    parser.add_argument(
+        '--save-every',
+        type=int,
+        default=10,
+        help='Сохранять промежуточный результат каждые N страниц '
+             '(по умолчанию: 10). 0 — отключить.'
+    )
+    parser.add_argument(
+        '--no-checkpoint',
+        action='store_true',
+        help='Отключить промежуточное сохранение (эквивалент --save-every 0).'
+    )
+    parser.add_argument(
+        '--checkpoint-path',
+        type=str,
+        default=None,
+        help='Путь к файлу промежуточного сохранения '
+             '(по умолчанию: <output>_checkpoint.json).'
+    )
+    parser.add_argument(
+        '--detail-urls-path',
+        type=str,
+        default='detail.txt',
+        help='Путь к текстовому файлу со списком detail_url '
+             '(обновляется при каждом чекпоинте и в самом конце, '
+             'по умолчанию: libex6000.txt).'
+    )
+    parser.add_argument(
         '--quiet',
         action='store_true',
         help='Не выводить прогресс в stderr'
@@ -451,9 +634,10 @@ def main():
                 print("Не найдено ни одной книги.", file=sys.stderr)
                 sys.exit(1)
             
-            save_to_json(books, args.output)
+            # === Сохранение JSON в локальном режиме ОТКЛЮЧЕНО (закомментировано) ===
+            # save_to_json(books, args.output)
             print(f"Найдено книг: {len(books)}")
-            print(f"Результат сохранён в: {args.output}")
+            print(f"(JSON-сохранение отключено) Результат НЕ сохранён в: {args.output}")
             
             # Показываем информацию о пагинации, если она есть
             if pagination.get('total_pages'):
@@ -475,13 +659,40 @@ def main():
                     print(f"[Инфо из файла] Всего страниц: {pagination['total_pages']}",
                           file=sys.stderr)
             
+            # Парсим page_range если задан
+            page_range = None
+            if args.page_range:
+                total_pages_for_range = pagination.get('total_pages') if args.input else None
+                try:
+                    page_range = parse_page_range(args.page_range, total_pages_for_range)
+                    if verbose:
+                        print(f"[Инфо] Загружаем страницы: {[p+1 for p in page_range]}", file=sys.stderr)
+                except ValueError as e:
+                    print(f"Ошибка в --page-range: {e}", file=sys.stderr)
+                    sys.exit(1)
+            
+            # Вычисляем параметры промежуточного сохранения
+            save_every = 0 if args.no_checkpoint else args.save_every
+            if save_every < 0:
+                print("Ошибка: --save-every должен быть >= 0", file=sys.stderr)
+                sys.exit(1)
+            checkpoint_path = args.checkpoint_path
+            if checkpoint_path is None:
+                _base, _ext = os.path.splitext(args.output)
+                checkpoint_path = f'{_base}_checkpoint{_ext or ".json"}'
+
             books = crawl_libex(
                 base_url=args.url,
                 start_page=args.start_page,
                 end_page=args.end_page,
                 max_pages=args.max_pages,
+                page_range=page_range,
                 delay=args.delay,
                 verbose=verbose,
+                save_every=save_every,
+                checkpoint_path=checkpoint_path,
+                output_path=args.output,
+                detail_urls_path=args.detail_urls_path,
             )
             
             if not books:
@@ -500,18 +711,19 @@ def main():
                 'books': books,
             }
             
-            # Сохраняем
-            with open(args.output, 'w', encoding='utf-8') as f:
-                json.dump(output_data, f, ensure_ascii=False, indent=2)
-            
+            # === Финальное сохранение JSON ОТКЛЮЧЕНО (закомментировано) ===
+            # with open(args.output, 'w', encoding='utf-8') as f:
+            #     json.dump(output_data, f, ensure_ascii=False, indent=2)
+
             print(f"Найдено книг: {len(books)}")
-            print(f"Результат сохранён в: {args.output}")
-        
-        # Сохраняем detail_url в detail.txt (для всех режимов, где есть книги)
-        if books:
-            save_detail_urls(books, 'detail.txt')
-            print(f"Ссылки сохранены в: detail.txt")
-        
+            print(f"(JSON-сохранение отключено) Результат НЕ сохранён в: {args.output}")
+            # detail.txt уже сохранён внутри crawl_libex (через чекпоинты и/или
+            # финальный блок), дополнительно дублируем здесь, чтобы при ошибке
+            # во время записи в финале пользователь всё равно получил файл.
+            if books and not os.path.exists(args.detail_urls_path):
+                save_detail_urls(books, args.detail_urls_path)
+                print(f"Ссылки сохранены в: {args.detail_urls_path}")
+
         if args.print_output:
             books_to_print = books if not args.online else books
             print("\n--- Найденные книги ---")
