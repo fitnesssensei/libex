@@ -31,6 +31,7 @@ import json
 import sys
 import os
 import time
+import random
 import argparse
 import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -42,6 +43,12 @@ from libex_parser import fetch_page, USER_AGENT, REQUEST_DELAY
 
 _print_lock = threading.Lock()
 _file_lock = threading.Lock()
+
+# ── Глобальный rate limiter ──
+_request_lock = threading.Lock()
+_last_request_time = 0.0
+MIN_DELAY = 1.0   # минимальная задержка между запросами (сек)
+MAX_DELAY = 3.0   # максимальная задержка между запросами (сек)
 
 
 def extract_book_id(url):
@@ -270,16 +277,27 @@ def fetch_and_parse(url, delay=REQUEST_DELAY, retries=3):
     """
     Загружает и парсит одну детальную страницу книги.
 
+    Использует глобальный rate limiter: запросы распределяются равномерно
+    со случайной задержкой между MIN_DELAY и MAX_DELAY (по умолчанию 1–3 сек),
+    независимо от количества потоков.
+
     Args:
         url (str): Полный URL страницы.
-        delay (float): Задержка перед запросом (для rate limiting).
+        delay (float): Игнорируется — используется MIN_DELAY/MAX_DELAY.
         retries (int): Количество повторных попыток при ошибке.
 
     Returns:
         tuple: (url, book_dict_or_None, error_message_or_None)
     """
-    if delay > 0:
-        time.sleep(delay)
+    # Глобальный rate limiter: выдерживаем паузу с момента последнего запроса
+    global _last_request_time
+    with _request_lock:
+        now = time.time()
+        elapsed = now - _last_request_time
+        pause = random.uniform(MIN_DELAY, MAX_DELAY)
+        if elapsed < pause:
+            time.sleep(pause - elapsed)
+        _last_request_time = time.time()
 
     last_error = None
     for attempt in range(retries):
@@ -436,7 +454,8 @@ def process_books(
         input_path (str): Путь к файлу со списком URL.
         output_path (str): Путь к выходному JSON файлу.
         threads (int): Количество потоков.
-        delay (float): Задержка между запросами (сек).
+        delay (float): Игнорируется — используется глобальный rate limiter
+                       со случайной задержкой от {MIN_DELAY} до {MAX_DELAY} сек.
         save_every (int): Сохранять чекпоинт каждые N книг.
         resume (bool): Дозапись (пропустить уже загруженные).
         verbose (bool): Выводить прогресс.
@@ -457,7 +476,7 @@ def process_books(
 
     if verbose:
         print(f'[Старт] Загружено URL: {total_urls}', file=sys.stderr)
-        print(f'[Старт] Потоков: {threads}, задержка: {delay}с', file=sys.stderr)
+        print(f'[Старт] Потоков: {threads}, задержка: random({MIN_DELAY}–{MAX_DELAY})с (глобальный rate limiter)', file=sys.stderr)
         print(f'[Старт] Выходной файл: {output_path}', file=sys.stderr)
         print(f'[Старт] Чекпоинт: {checkpoint_path}', file=sys.stderr)
 
@@ -474,6 +493,13 @@ def process_books(
 
     urls_to_process = [u for u in all_urls if u not in processed_urls]
     skipped = total_urls - len(urls_to_process)
+    # Убираем дубликаты URL в самом списке (сохраняя порядок)
+    before_dedup = len(urls_to_process)
+    urls_to_process = list(dict.fromkeys(urls_to_process))
+    dup_urls = before_dedup - len(urls_to_process)
+
+    if dup_urls and verbose:
+        print(f'[Старт] Удалено дубликатов URL: {dup_urls}', file=sys.stderr)
 
     if verbose and skipped > 0:
         print(f'[Resume] Пропущено (уже обработано): {skipped} URL', file=sys.stderr)
@@ -487,6 +513,8 @@ def process_books(
         print(f'[Старт] Осталось обработать: {len(urls_to_process)} URL', file=sys.stderr)
 
     all_books = list(existing_books)
+    # Множество URL уже добавленных в all_books — для защиты от дубликатов
+    added_urls = set(processed_urls)
     failed_urls = []
     processed_count = 0
     total_to_process = len(urls_to_process)
@@ -515,12 +543,22 @@ def process_books(
             processed_count += 1
 
             if book:
-                all_books.append(book)
-                if verbose:
-                    title = book.get('title', book.get('title_from_title', '?'))
-                    with _print_lock:
-                        print(f'[{processed_count}/{total_to_process}] ✓ {title[:60]}',
-                              file=sys.stderr)
+                book_url = book.get('detail_url', '')
+                if book_url and book_url in added_urls:
+                    # Пропускаем дубликат (уже добавлен ранее)
+                    if verbose:
+                        with _print_lock:
+                            print(f'[{processed_count}/{total_to_process}] ~ {book_url} — пропущен дубликат',
+                                  file=sys.stderr)
+                else:
+                    if book_url:
+                        added_urls.add(book_url)
+                    all_books.append(book)
+                    if verbose:
+                        title = book.get('title', book.get('title_from_title', '?'))
+                        with _print_lock:
+                            print(f'[{processed_count}/{total_to_process}] ✓ {title[:60]}',
+                                  file=sys.stderr)
             else:
                 failed_urls.append(url)
                 if verbose:
@@ -556,9 +594,26 @@ def process_books(
     stats['elapsed_sec'] = round(time.time() - start_time, 1)
     stats['total_processed'] = len(all_books)
 
+    # ── Дедупликация: группируем по detail_url, оставляем запись с макс. полей ──
+    before = len(all_books)
+    dedup = {}
+    for b in all_books:
+        key = b.get('detail_url', b.get('book_id', ''))
+        if not key:
+            continue
+        if key in dedup:
+            if len(b) > len(dedup[key]):
+                dedup[key] = b
+        else:
+            dedup[key] = b
+    all_books = list(dedup.values())
+    dupes_removed = before - len(all_books)
+
     if verbose:
-        print(f'\n[Финал] Обработано книг: {len(all_books)}', file=sys.stderr)
+        print(f'\n[Финал] Обработано книг: {before}', file=sys.stderr)
         print(f'[Финал] Успешно: {len(all_books) - len(existing_books)} новых', file=sys.stderr)
+        if dupes_removed:
+            print(f'[Финал] Удалено дубликатов: {dupes_removed}', file=sys.stderr)
         print(f'[Финал] Ошибок: {len(failed_urls)}', file=sys.stderr)
         print(f'[Финал] Время: {stats["elapsed_sec"]}с', file=sys.stderr)
 
@@ -600,9 +655,9 @@ def main():
     parser.add_argument('--threads', type=int, default=5,
                         help='Количество потоков (по умолчанию: 5)')
     parser.add_argument('--delay', type=float, default=REQUEST_DELAY,
-                        help=f'Задержка между запросами в секундах (по умолчанию: {REQUEST_DELAY})')
-    parser.add_argument('--save-every', type=int, default=100,
-                        help='Чекпоинт каждые N книг (по умолчанию: 100, 0 = отключить)')
+                        help='Игнорируется. Задержка теперь случайная от 1 до 3 секунд через глобальный rate limiter.')
+    parser.add_argument('--save-every', type=int, default=10,
+                        help='Чекпоинт каждые N книг (по умолчанию: 10, 0 = отключить)')
     parser.add_argument('--resume', action='store_true',
                         help='Дозапись: пропустить уже обработанные URL')
     parser.add_argument('--failed', type=str, default=None,

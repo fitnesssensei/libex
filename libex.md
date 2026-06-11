@@ -21,3 +21,13 @@ python3 libex_detail_worker.py detail.txt --start-line 500 --threads 10
 # Большой файл: строки 5000-10000 из 14412
 python3 libex_detail_worker.py ссылки/detail1400str.txt -o chunk_5k-10k.json \
   --start-line 5000 --end-line 10000 --threads 15 --save-every 200
+
+## Примеры использования очистка JSON:
+# Один файл → создаст JSONS/100_cleaned.json
+python3 clean_json.py JSONS/100.json
+# Изменить файл на месте (с бэкапом)
+python3 clean_json.py JSONS/100.json --in-place --backup
+# Обработать все JSON в директории
+python3 clean_json.py json_fails/
+# Рекурсивно обработать всё
+python3 clean_json.py . --recursive --in-place --backup

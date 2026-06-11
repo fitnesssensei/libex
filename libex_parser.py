@@ -7,6 +7,8 @@ import re
 import json
 import sys
 import time
+import random
+import threading
 from urllib.request import urlopen, Request, build_opener, install_opener, HTTPCookieProcessor
 from urllib.error import HTTPError, URLError
 from http.cookiejar import CookieJar
@@ -16,12 +18,38 @@ _cookie_jar = CookieJar()
 _opener = build_opener(HTTPCookieProcessor(_cookie_jar))
 install_opener(_opener)
 _session_initialized = False
+_session_lock = threading.Lock()
+
+# Таймаут HTTP-запроса (сек) — чтобы скрипт не зависал навсегда
+REQUEST_TIMEOUT = 10
 
 # Константы
 DEFAULT_BASE_URL = 'https://www.libex.ru/cat/fiction/'
 DEFAULT_ITEMS_PER_PAGE = 12  # значение по умолчанию на сайте
 REQUEST_DELAY = 1.0  # задержка между запросами (сек)
-USER_AGENT = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+USER_AGENTS = [
+    # 1 — Windows 10, Chrome 120
+    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+    # 2 — Windows 11, Firefox 121
+    'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:121.0) Gecko/20100101 Firefox/121.0',
+    # 3 — macOS Sonoma 14, Safari 17.1
+    'Mozilla/5.0 (Macintosh; Intel Mac OS X 14_0) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.1 Safari/605.1.15',
+    # 4 — Windows 10, Edge 120
+    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36 Edg/120.0.0.0',
+    # 5 — Linux Ubuntu, Chrome 120
+    'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+    # 6 — Windows 10, Opera 106
+    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36 OPR/106.0.0.0',
+    # 7 — macOS Ventura 13, Firefox 121
+    'Mozilla/5.0 (Macintosh; Intel Mac OS X 13.6; rv:121.0) Gecko/20100101 Firefox/121.0',
+    # 8 — Android 14, Chrome 120 (мобильный)
+    'Mozilla/5.0 (Linux; Android 14; Pixel 8 Pro) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.6099.144 Mobile Safari/537.36',
+    # 9 — iPhone iOS 17, Safari (мобильный)
+    'Mozilla/5.0 (iPhone; CPU iPhone OS 17_1 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.1 Mobile/15E148 Safari/604.1',
+    # 10 — Windows 11, Chrome 119 (чуть старше)
+    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36',
+]
+USER_AGENT = USER_AGENTS[0]  # для обратной совместимости
 def extract_pagination_info(content):
     """
     Извлекает информацию о пагинации из HTML-содержимого.
@@ -75,105 +103,91 @@ def extract_pagination_info(content):
 def extract_books_from_html(content):
     """
     Парсит HTML содержимое страницы Libex и извлекает список книг.
-    
+
     Args:
         content (str): HTML содержимое страницы.
-    
+
     Returns:
         list: Список словарей с данными о книгах.
     """
     books = []
-    
+
     # Разбиваем на блоки книг по паттерну открывающего div
     book_blocks = re.findall(
         r'<div style="border-bottom:1px solid #330066;padding:0\.35em 0em 0\.35em 0em;">(.*?)<br clear="all" />\s*</div>',
         content,
         re.DOTALL
     )
-    
+
     for book_block in book_blocks:
         book = {}
-        
+
         # Ссылка на детальную страницу
         detail_match = re.search(r'href="(/detail/book\d+\.html)"', book_block)
         if detail_match:
             book['detail_url'] = 'https://www.libex.ru' + detail_match.group(1)
-        
-        # Ссылка на изображение
-        #img_match = re.search(r'<img[^>]+src="([^"]+)"', book_block)
-        #if img_match:
-        #    book['image_url'] = img_match.group(1)
-        
-        # Автор
-        author_match = re.search(
-            r'<tr><td>(.*?)</td></tr>\s*<tr><td><big>',
-            book_block,
-            re.DOTALL
-        )
-        if author_match:
-            book['author'] = author_match.group(1).strip()
-        
-        # Название
-        title_match = re.search(
-            r'<big><a[^>]*>(.*?)</a></big>',
-            book_block,
-            re.DOTALL
-        )
-        if title_match:
-            book['title'] = title_match.group(1).strip()
-        
-        # Год и издательство
-        year_pub = re.search(
-            r'<tr><td>(.*?)(\d{4})\s*г\.;.*?Изд-во:\s*(.*?)<small',
-            book_block,
-            re.DOTALL
-        )
-        if year_pub:
-            book['year'] = int(year_pub.group(2))
-            book['publisher'] = year_pub.group(3).strip()
-        
-        # Серия
-        series_match = re.search(
-            r'Серия:\s*<span class="bigger"><span style="color:#330099">(.*?)</span></span>',
-            book_block,
-            re.DOTALL
-        )
-        if series_match:
-            book['series'] = series_match.group(1).strip()
-        
-        # Цена
-        #price_match = re.search(
-        #    r'<div style="width:7em;float:right;white-space:nowrap;">.*?&nbsp;(\d+)\s*&nbsp;руб',
-        #    book_block,
-        #    re.DOTALL
-        #)
-        #if price_match:
-        #    book['price'] = int(price_match.group(1))
-        
-        # Состояние книги
-        #cond_match = re.search(
-        #    r'<img src="/img/cond/(\d)\.gif"[^>]*alt="Состояние:\s*([^"]*)"',
-        #   book_block
-        #)
-        #if cond_match:
-        #    book['condition_code'] = int(cond_match.group(1))
-        #    book['condition'] = cond_match.group(2)
-        
+
+        # ---- Короткая запись (закомментирована - полная информация
+        #       собирается в libex_detail_worker.py) ----
+
+        # # Ссылка на изображение
+        # #img_match = re.search(r'<img[^>]+src="([^"]+)"', book_block)
+        # #if img_match:
+        # #    book['image_url'] = img_match.group(1)
+
+        # # Автор
+        # author_match = re.search(
+        #     r'<tr><td>(.*?)</td></tr>\s*<tr><td><big>',
+        #     book_block,
+        #     re.DOTALL
+        # )
+        # if author_match:
+        #     book['author'] = author_match.group(1).strip()
+
+        # # Название
+        # title_match = re.search(
+        #     r'<big><a[^>]*>(.*?)</a></big>',
+        #     book_block,
+        #     re.DOTALL
+        # )
+        # if title_match:
+        #     book['title'] = title_match.group(1).strip()
+
+        # # Год и издательство
+        # year_pub = re.search(
+        #     r'<tr><td>(.*?)(\d{4})\s*г\.;.*?Изд-во:\s*(.*?)<small',
+        #     book_block,
+        #     re.DOTALL
+        # )
+        # if year_pub:
+        #     book['year'] = int(year_pub.group(2))
+        #     book['publisher'] = year_pub.group(3).strip()
+
+        # # Серия
+        # series_match = re.search(
+        #     r'Серия:\s*<span class="bigger"><span style="color:#330099">(.*?)</span></span>',
+        #     book_block,
+        #     re.DOTALL
+        # )
+        # if series_match:
+        #     book['series'] = series_match.group(1).strip()
+
         if book.get('detail_url'):
             books.append(book)
-    
+
     return books
-# Стандартные заголовки браузера для обхода антибот-защиты
-_BROWSER_HEADERS = {
-    'User-Agent': USER_AGENT,
-    'Accept': (
-        'text/html,application/xhtml+xml,application/xml;q=0.9,'
-        'image/avif,image/webp,image/apng,*/*;q=0.8'
-    ),
-    'Accept-Language': 'ru-RU,ru;q=0.9,en;q=0.8',
-    'Referer': 'https://www.libex.ru/',
-    'Connection': 'keep-alive',
-}
+def _get_browser_headers():
+    """Возвращает заголовки браузера со случайным User-Agent (из пула 10 шт)."""
+    return {
+        'User-Agent': random.choice(USER_AGENTS),
+        'Accept': (
+            'text/html,application/xhtml+xml,application/xml;q=0.9,'
+            'image/avif,image/webp,image/apng,*/*;q=0.8'
+        ),
+        'Accept-Language': 'ru-RU,ru;q=0.9,en;q=0.8',
+        'Referer': 'https://www.libex.ru/',
+        'Connection': 'keep-alive',
+    }
 
 
 def fetch_page(url):
@@ -197,14 +211,17 @@ def fetch_page(url):
     # Перед первым запросом к целевой странице посещаем корень,
     # чтобы получить необходимые cookie (libex_uid и libex_welcome_here2)
     if not _session_initialized:
-        _session_initialized = True
-        root_req = Request('https://www.libex.ru/',
-                           headers=_BROWSER_HEADERS)
-        with urlopen(root_req) as resp:
-            resp.read()  # читаем, но не используем
+        with _session_lock:
+            if not _session_initialized:  # double-checked locking
+                _session_initialized = True
+                root_headers = _get_browser_headers()
+                root_req = Request('https://www.libex.ru/',
+                                   headers=root_headers)
+                with urlopen(root_req, timeout=REQUEST_TIMEOUT) as resp:
+                    resp.read()  # читаем, но не используем
 
-    req = Request(url, headers=_BROWSER_HEADERS)
-    with urlopen(req) as response:
+    req = Request(url, headers=_get_browser_headers())
+    with urlopen(req, timeout=REQUEST_TIMEOUT) as response:
         raw_data = response.read()
         content = raw_data.decode('cp1251')
 
@@ -300,7 +317,7 @@ def parse_page_range(page_range_str, total_pages=None):
 def crawl_libex(base_url, start_page=0, end_page=None, max_pages=None,
                 page_range=None, delay=REQUEST_DELAY, verbose=True,
                 save_every=10, checkpoint_path='libex_books_checkpoint.json',
-                output_path=None, detail_urls_path='detail.txt'):
+                output_path=None, detail_urls_path='detail7.txt'):
     """
     Обходит страницы каталога Libex.ru с поддержкой пагинации.
 
