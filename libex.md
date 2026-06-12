@@ -1,3 +1,9 @@
+10000 stranic sparseno
+
+# чистка JSON
+python3 clean_json.py JSONS/230_cleaned.json
+
+
 python3 libex_parser.py --online --max-pages 3
 # Загрузить страницы 1-5
 python3 libex_parser.py --online --page-range "1-5"

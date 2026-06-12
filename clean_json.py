@@ -41,6 +41,7 @@ FIELDS_TO_REMOVE = [
     "author_search_url",
     "date_added",
     "image_thumb_url",
+    "image_large_url",
     "has_image",
     "view_counter_id",
     "in_stock",
@@ -48,6 +49,40 @@ FIELDS_TO_REMOVE = [
     "prev_book_url",
     "next_book_url",
 ]
+
+
+def normalize_isbn(isbn):
+    if isbn is None:
+        return None
+    if not isinstance(isbn, str):
+        isbn = str(isbn)
+    normalized = ''.join(ch for ch in isbn.strip().upper() if ch not in ' -')
+    return normalized or None
+
+
+def get_isbn_key(item):
+    if not isinstance(item, dict):
+        return None
+    return normalize_isbn(item.get('isbn'))
+
+
+def deduplicate_books_by_isbn(books):
+    seen_isbns = set()
+    deduplicated_books = []
+    duplicates_removed = 0
+
+    for item in books:
+        isbn_key = get_isbn_key(item)
+        if isbn_key is None:
+            deduplicated_books.append(item)
+            continue
+        if isbn_key in seen_isbns:
+            duplicates_removed += 1
+            continue
+        seen_isbns.add(isbn_key)
+        deduplicated_books.append(item)
+
+    return deduplicated_books, duplicates_removed
 
 
 
@@ -64,18 +99,25 @@ def clean_json_file(filepath, in_place=False, backup=False):
     except (json.JSONDecodeError, IOError) as e:
         result['status'] = f'Ошибка чтения: {e}'
         return result
-    if not isinstance(data, dict):
-        result['status'] = 'Файл не является JSON-объектом'
-        return result
-    books = data.get('books', data.get('items', data.get('data', None)))
-    if books is None and isinstance(data, list):
+    books_key = None
+    if isinstance(data, dict):
+        books = data.get('books', data.get('items', data.get('data', None)))
+        for key in ('books', 'items', 'data'):
+            if key in data and data[key] is books:
+                books_key = key
+                break
+    elif isinstance(data, list):
         books = data
+    else:
+        result['status'] = 'Файл не является JSON-объектом или массивом'
+        return result
     if books is None:
         result['status'] = 'Не найден массив books/items/data'
         return result
     if not isinstance(books, list):
         result['status'] = 'Поле books не является массивом'
         return result
+
     result['books_count'] = len(books)
     total_removed = 0
     for item in books:
@@ -85,7 +127,16 @@ def clean_json_file(filepath, in_place=False, backup=False):
             if field in item:
                 del item[field]
                 total_removed += 1
+
+    books, duplicates_removed = deduplicate_books_by_isbn(books)
+    result['books_count'] = len(books)
+    result['duplicates_removed'] = duplicates_removed
     result['removed_count'] = total_removed
+
+    if books_key is not None:
+        data[books_key] = books
+    else:
+        data = books
     if in_place:
         if backup:
             backup_path = filepath + '.bak'
@@ -98,7 +149,7 @@ def clean_json_file(filepath, in_place=False, backup=False):
         output_path = filepath
     else:
         base, ext = os.path.splitext(filepath)
-        output_path = f"{base}_cleaned{ext}"
+        output_path = f"{base}_clean{ext}"
     try:
         with open(output_path, 'w', encoding='utf-8') as f:
             json.dump(data, f, ensure_ascii=False, indent=2)
@@ -160,6 +211,7 @@ def main():
     print(f"{'='*60}")
     total_books = 0
     total_removed = 0
+    total_duplicates_removed = 0
     errors = 0
     for res in results:
         status_icon = '✓' if res['status'] == 'ok' else '✗'
@@ -168,6 +220,8 @@ def main():
             parts.append(f"книг: {res['books_count']}")
         if res['removed_count']:
             parts.append(f"удалено полей: {res['removed_count']}")
+        if res.get('duplicates_removed'):
+            parts.append(f"убрано дублей: {res['duplicates_removed']}")
         if res.get('output'):
             parts.append(f"→ {res['output']}")
         if res.get('backup'):
@@ -178,8 +232,9 @@ def main():
             errors += 1
         total_books += res['books_count']
         total_removed += res['removed_count']
+        total_duplicates_removed += res.get('duplicates_removed', 0)
     print(f"{'='*60}")
-    print(f"Итого: {total_books} книг, удалено {total_removed} полей")
+    print(f"Итого: {total_books} книг, удалено {total_removed} полей, убрано дублей: {total_duplicates_removed}")
     if errors:
         print(f"Ошибок: {errors}", file=sys.stderr)
     print(f"{'='*60}")
