@@ -1,4 +1,10 @@
-10000 stranic sparseno
+15000 nschalo 
+2000 сек = 1000 книг.JSON - working
+
+# zapusk neyrosety
+cline
+                                                            # or
+                                                            cline "your task"
 
 # чистка JSON
 python3 clean_json.py JSONS/230_cleaned.json
