@@ -29,6 +29,7 @@ from pathlib import Path
 
 # Поля для удаления из каждой книги
 FIELDS_TO_REMOVE = [
+    "detail_url",
     "format",
     "book_id",
     "title_from_title",
