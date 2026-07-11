@@ -8,23 +8,55 @@ import json
 import sys
 import time
 import random
+# -- dobavil
+try:
+    import socks
+    SOCKS_AVAILABLE = True
+except ImportError:
+    SOCKS_AVAILABLE = False
+    # --
 import threading
-from urllib.request import urlopen, Request, build_opener, install_opener, HTTPCookieProcessor
+from urllib.request import (
+    urlopen, Request, build_opener, install_opener, HTTPCookieProcessor, ProxyHandler,
+)
 from urllib.error import HTTPError, URLError
 from http.cookiejar import CookieJar
+import socket
 
-# Глобальный CookieJar для поддержания сессии
+#  Глобальный CookieJar для поддержания сессии
 _cookie_jar = CookieJar()
 _opener = build_opener(HTTPCookieProcessor(_cookie_jar))
 install_opener(_opener)
+
+_proxy_url = None  # -- dobavil . URL прокси-сервера (задаётся через --proxy)
+
 _session_initialized = False
 _session_lock = threading.Lock()
 
 # Таймаут HTTP-запроса (сек) — чтобы скрипт не зависал навсегда
-REQUEST_TIMEOUT = 10
+REQUEST_TIMEOUT = 20
 
 # Константы
-DEFAULT_BASE_URL = 'https://www.libex.ru/cat/fiction/'
+# ссылка на категории для паорсинга 
+
+#DEFAULT_BASE_URL = 'https://www.libex.ru/cat/cyber/'  # computers 544.      696
+#DEFAULT_BASE_URL = 'https://www.libex.ru/cat/educ/'  # наука 7852
+#DEFAULT_BASE_URL = 'https://www.libex.ru/cat/school/'  # shkola 1693
+#DEFAULT_BASE_URL = 'https://www.libex.ru/cat/personal/'  # семья дом и дача 1452
+#DEFAULT_BASE_URL = 'https://www.libex.ru/cat/moto/'  # tehnica 1893
+#DEFAULT_BASE_URL = 'https://www.libex.ru/cat/health/'  # med.sport.zdorov 1930      696 stroka
+#DEFAULT_BASE_URL = 'https://www.libex.ru/cat/politics/'  # politik 4106
+
+DEFAULT_BASE_URL = 'https://www.libex.ru/cat/ref/'  # special 1337
+
+#DEFAULT_BASE_URL = 'https://www.libex.ru/cat/culture/'  # kultura 3461
+#DEFAULT_BASE_URL = 'https://www.libex.ru/cat/hobby/'  # hobbi 527
+#DEFAULT_BASE_URL = 'https://www.libex.ru/cat/mistiq/'  # mistik 913
+#DEFAULT_BASE_URL = 'https://www.libex.ru/cat/other.html'  # raznoe 70.     629 stroka
+#DEFAULT_BASE_URL = 'https://www.libex.ru/cat/business/'  # деловая
+#DEFAULT_BASE_URL = 'https://www.libex.ru/cat/fiction/' # Худ литра
+#DEFAULT_BASE_URL = 'https://www.libex.ru/cat/child/'  # детская
+
 DEFAULT_ITEMS_PER_PAGE = 12  # значение по умолчанию на сайте
 REQUEST_DELAY = 1.0  # задержка между запросами (сек)
 USER_AGENTS = [
@@ -189,7 +221,61 @@ def _get_browser_headers():
         'Connection': 'keep-alive',
     }
 
-
+# -- dobavil
+def setup_proxy(proxy_url):
+    """
+    Настраивает прокси для всех HTTP-запросов.
+    Поддерживает HTTP/HTTPS прокси и SOCKS5 (через PySocks + SSH-туннель).
+    Args:
+        proxy_url (str): URL прокси, например:
+            - 'http://178.20.41.120:3128'
+            - 'socks5://127.0.0.1:1080'  (для SSH-туннеля)
+            - None / '' — отключить прокси
+    """
+    global _proxy_url, _opener, _cookie_jar
+    if not proxy_url:
+        _proxy_url = None
+        # Возвращаем стандартный opener (без прокси)
+        _cookie_jar = CookieJar()
+        _opener = build_opener(HTTPCookieProcessor(_cookie_jar))
+        install_opener(_opener)
+        return
+    _proxy_url = proxy_url
+    # SOCKS5-прокси (socks5:// or socks5h://)
+    if proxy_url.startswith('socks5'):
+        if not SOCKS_AVAILABLE:
+            print("Ошибка: Для SOCKS5-прокси нужен PySocks: pip3 install PySocks",
+                  file=sys.stderr)
+            sys.exit(1)
+        # Парсим host:port из socks5://host:port
+        socks_part = proxy_url.split('://')[1]
+        if ':' in socks_part:
+            host, port_str = socks_part.split(':')
+            port = int(port_str)
+        else:
+            host = socks_part
+            port = 1080
+        # Monkey-patch socket.socket — все urlopen() пойдут через SOCKS5
+        # ProxyHandler НЕ используем — urllib не понимает схему socks5://
+        socks.set_default_proxy(socks.SOCKS5, host, port)
+        socket.socket = socks.socksocket
+        # Opener только с CookieJar (без ProxyHandler)
+        _cookie_jar = CookieJar()
+        _opener = build_opener(HTTPCookieProcessor(_cookie_jar))
+        install_opener(_opener)
+    # HTTP/HTTPS-прокси
+    elif proxy_url.startswith('http'):
+        mapped = {
+            'http': proxy_url,
+            'https': proxy_url,
+        }
+        _cookie_jar = CookieJar()
+        _opener = build_opener(
+            HTTPCookieProcessor(_cookie_jar),
+            ProxyHandler(mapped),
+        )
+        install_opener(_opener)
+# ------
 def fetch_page(url):
     """
     Загружает HTML-содержимое страницы с сайта Libex.ru.
@@ -607,7 +693,15 @@ def main():
     parser.add_argument(
         '--detail-urls-path',
         type=str,
-        default='detail.txt',
+        default='special1337.txt',
+        #default='kultura3489.txt',
+        #default='hobbbi527',
+        #default='mistik913',
+        #default='drugoe70',
+        #default='delovaya1152',
+        #default='detail15.txt',
+        #default='child5000',
+
         help='Путь к текстовому файлу со списком detail_url '
              '(обновляется при каждом чекпоинте и в самом конце, '
              'по умолчанию: libex6000.txt).'
@@ -622,10 +716,15 @@ def main():
         action='store_true',
         help='Показать информацию о пагинации из локального HTML файла и выйти'
     )
-    
+    # --dobavil
+    parser.add_argument('--proxy', type=str, default=None,
+                        help='Прокси-сервер (http://host:port или socks5://host:port)')
+    # ---
     args = parser.parse_args()
+    setup_proxy(args.proxy) # -- dobavil
     verbose = not args.quiet
-    
+
+     # ── Конец прокси ── старый блок !
     try:
         if args.info and args.input:
             # Режим: показать информацию о пагинации из локального файла

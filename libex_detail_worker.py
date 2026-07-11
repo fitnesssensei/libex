@@ -39,7 +39,7 @@ from urllib.error import HTTPError, URLError
 from datetime import datetime
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from libex_parser import fetch_page, USER_AGENT, REQUEST_DELAY
+from libex_parser import fetch_page, setup_proxy, USER_AGENT, REQUEST_DELAY  # dobavil proxy
 
 _print_lock = threading.Lock()
 _file_lock = threading.Lock()
@@ -303,9 +303,25 @@ def fetch_and_parse(url, delay=REQUEST_DELAY, retries=3):
     for attempt in range(retries):
         try:
             html = fetch_page(url)
+
+            # ── Диагностика: сервер вернул пустой/блокирующий ответ ──
+            if not html or not html.strip():
+                return (url, None,
+                        'пустой ответ сервера (0 байт контента — сайт недоступен '
+                        'или блокирует IP/прокси)')
+            # Страница пришла, но в ней нет типичной HTML-разметки Libex
+            # (возможен капча-экран, заглушка антибота или «белый экран» PHP)
+            if not any(m in html for m in ('<html', '<title', 'nomargin', '<body')):
+                snippet = html[:120].replace('\n', ' ').replace('\r', ' ').strip()
+                return (url, None,
+                        f'подозрительно пустая страница (нет HTML-разметки; '
+                        f'начало ответа: {snippet!r})')
+
             book = parse_detail_page(html, url)
             if book is None:
-                return (url, None, 'Не удалось распознать структуру страницы')
+                return (url, None,
+                        'Не удалось распознать структуру страницы (HTML пришёл, но '
+                        'нужные поля не найдены — возможно, сайт сменил вёрстку)')
             return (url, book, None)
         except HTTPError as e:
             last_error = f'HTTP {e.code}'
@@ -669,20 +685,33 @@ def main():
                         help='Номер первой строки из файла для обработки (1-based)')
     parser.add_argument('--end-line', type=int, default=None,
                         help='Номер последней строки из файла (1-based, включительно)')
-
-
+            # -- dobavil
+    parser.add_argument('--proxy', type=str, default=None,
+                        help='Прокси-сервер (http://host:port или socks5://host:port)')
+          # -------
     args = parser.parse_args()
+    setup_proxy(args.proxy)
 
     # Режим теста
     if args.test:
         print(f'[Тест] Загружаю: {args.test}')
         try:
             html = fetch_page(args.test)
+            if not html or not html.strip():
+                print('[Ошибка] пустой ответ сервера (0 байт контента — '
+                      'сайт недоступен или блокирует IP/прокси)')
+                return
+            if not any(m in html for m in ('<html', '<title', 'nomargin', '<body')):
+                snippet = html[:120].replace('\n', ' ').replace('\r', ' ').strip()
+                print(f'[Ошибка] подозрительно пустая страница (нет HTML-разметки; '
+                      f'начало ответа: {snippet!r})')
+                return
             book = parse_detail_page(html, args.test)
             if book:
                 print(json.dumps(book, ensure_ascii=False, indent=2))
             else:
-                print('[Ошибка] Не удалось распарсить страницу')
+                print('[Ошибка] Не удалось распарсить страницу (HTML пришёл, но '
+                      'нужные поля не найдены — возможно, сайт сменил вёрстку)')
         except Exception as e:
             print(f'[Ошибка] {e}')
         return

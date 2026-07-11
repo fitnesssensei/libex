@@ -1,0 +1,104 @@
+# ============================================================
+# Libex — файл игнорирования (.gitignore)
+# ============================================================
+
+# ---------- Python ----------
+# Байт-код и кэш интерпретатора
+__pycache__/
+*.py[cod]
+*$py.class
+*.pyc
+
+# Виртуальные окружения
+.venv/
+venv/
+env/
+ENV/
+.env
+.venv*
+
+# Логи и временные файлы Python
+*.log
+*.pyc
+*.pyo
+*.pyd
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+pip-wheel-metadata/
+share/python-wheels/
+
+# Тесты / покрытие
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.tox/
+.coverage
+.coverage.*
+htmlcov/
+.cache
+nosetests.xml
+coverage.xml
+
+# IPython / Jupyter
+.ipynb_checkpoints
+*.ipynb
+
+# ---------- Системные / OS файлы ----------
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+._*
+.Spotlight-V100
+.Trashes
+.fseventsd
+.volumes
+
+# Windows
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+
+# Linux
+*~
+.directory
+.Trash-*
+
+# ---------- Редакторы / IDE ----------
+.vscode/
+.idea/
+*.swp
+*.swo
+*.swn
+*~
+
+# ============================================================
+# Данные проекта (по запросу: все txt, json, md)
+# ============================================================
+# Текстовые файлы
+*.txt
+
+# JSON-файлы (включая данные в папках vBaze/, JSONS/, ссылки/ и др.)
+*.json
+
+# Markdown-файлы
+*.md
+
+# HTML-страницы (вспомогательные для парсинга)
+*.html
+*.htm
