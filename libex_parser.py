@@ -36,9 +36,22 @@ _session_lock = threading.Lock()
 # Таймаут HTTP-запроса (сек) — чтобы скрипт не зависал навсегда
 REQUEST_TIMEOUT = 20
 
+# Число попыток загрузки одной страницы перед тем, как признать её "неудачной".
+# Временные сетевые сбои (Connection reset, таймауты) обычно проходят со 2-3 попытки.
+MAX_RETRIES = 5
+# Стартовая задержка между повторами (сек). Растёт экспоненциально: 3 -> 6 -> 12 -> 24 -> 48.
+RETRY_BACKOFF_BASE = 3.0
+# Случайный разброс задержки (джиттер), чтобы повторы не шли строго синхронно.
+RETRY_BACKOFF_JITTER = 2.0
+
+# HTTP-коды, которые считаем временными и стоит повторить запрос.
+# (сервер перегружен / намеренно замедляет нас / даёт привратник антибота)
+RETRYABLE_HTTP_CODES = {403, 429, 500, 502, 503, 504}
+
 # Константы
 # ссылка на категории для паорсинга 
 
+DEFAULT_BASE_URL = 'https://www.libex.ru/'
 #DEFAULT_BASE_URL = 'https://www.libex.ru/cat/cyber/'  # computers 544.      696
 #DEFAULT_BASE_URL = 'https://www.libex.ru/cat/educ/'  # наука 7852
 #DEFAULT_BASE_URL = 'https://www.libex.ru/cat/school/'  # shkola 1693
@@ -46,9 +59,7 @@ REQUEST_TIMEOUT = 20
 #DEFAULT_BASE_URL = 'https://www.libex.ru/cat/moto/'  # tehnica 1893
 #DEFAULT_BASE_URL = 'https://www.libex.ru/cat/health/'  # med.sport.zdorov 1930      696 stroka
 #DEFAULT_BASE_URL = 'https://www.libex.ru/cat/politics/'  # politik 4106
-
-DEFAULT_BASE_URL = 'https://www.libex.ru/cat/ref/'  # special 1337
-
+#DEFAULT_BASE_URL = 'https://www.libex.ru/cat/ref/'  # special 1337
 #DEFAULT_BASE_URL = 'https://www.libex.ru/cat/culture/'  # kultura 3461
 #DEFAULT_BASE_URL = 'https://www.libex.ru/cat/hobby/'  # hobbi 527
 #DEFAULT_BASE_URL = 'https://www.libex.ru/cat/mistiq/'  # mistik 913
@@ -58,7 +69,7 @@ DEFAULT_BASE_URL = 'https://www.libex.ru/cat/ref/'  # special 1337
 #DEFAULT_BASE_URL = 'https://www.libex.ru/cat/child/'  # детская
 
 DEFAULT_ITEMS_PER_PAGE = 12  # значение по умолчанию на сайте
-REQUEST_DELAY = 1.0  # задержка между запросами (сек)
+REQUEST_DELAY = 10.0  # задержка между запросами (сек)
 USER_AGENTS = [
     # 1 — Windows 10, Chrome 120
     'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
@@ -218,7 +229,13 @@ def _get_browser_headers():
         ),
         'Accept-Language': 'ru-RU,ru;q=0.9,en;q=0.8',
         'Referer': 'https://www.libex.ru/',
-        'Connection': 'keep-alive',
+        # 'Connection: close' — не использовать keep-alive между запросами.
+        # urllib пулит (переиспользует) TCP-соединения, но после долгой паузы
+        # (delay между страницами) сервер обычно закрывает такой сокет, и следующий
+        # запрос уходит по уже закрытому соединению → получаем
+        # "[Errno 54] Connection reset by peer". Каждый запрос открывает новое
+        # соединение, зато исключает этот класс сбоев.
+        'Connection': 'close',
     }
 
 # -- dobavil
@@ -247,17 +264,31 @@ def setup_proxy(proxy_url):
             print("Ошибка: Для SOCKS5-прокси нужен PySocks: pip3 install PySocks",
                   file=sys.stderr)
             sys.exit(1)
-        # Парсим host:port из socks5://host:port
+        # Парсим socks5://[user:pass@]host:port
         socks_part = proxy_url.split('://')[1]
+        # Отделяем опциональные креды user:pass@ от host:port
+        userinfo = None
+        if '@' in socks_part:
+            userinfo, socks_part = socks_part.rsplit('@', 1)
         if ':' in socks_part:
-            host, port_str = socks_part.split(':')
+            host, port_str = socks_part.rsplit(':', 1)
             port = int(port_str)
         else:
             host = socks_part
             port = 1080
+        # Креды (если были заданы)
+        username = None
+        password = None
+        if userinfo:
+            if ':' in userinfo:
+                username, password = userinfo.split(':', 1)
+            else:
+                username = userinfo
         # Monkey-patch socket.socket — все urlopen() пойдут через SOCKS5
         # ProxyHandler НЕ используем — urllib не понимает схему socks5://
-        socks.set_default_proxy(socks.SOCKS5, host, port)
+        socks.set_default_proxy(socks.SOCKS5, host, port,
+                                username=username, password=password,
+                                rdns=True)
         socket.socket = socks.socksocket
         # Opener только с CookieJar (без ProxyHandler)
         _cookie_jar = CookieJar()
@@ -276,35 +307,46 @@ def setup_proxy(proxy_url):
         )
         install_opener(_opener)
 # ------
-def fetch_page(url):
+def _reset_session():
+    """Сбрасывает cookie-сессию и opener.
+
+    На долгих прогонах (сотни страниц) сервер может "протухшить" сессию
+    (сбросить/инвалидировать cookie). На случай ретрая заново берём свежие
+    cookie с корня сайта, чтобы не ходить со старыми.
+
+    Openеr пересобираем через setup_proxy(), чтобы сохранить текущую
+    конфигурацию прокси (если она была задана через --proxy).
     """
-    Загружает HTML-содержимое страницы с сайта Libex.ru.
-    Выполняет предварительный запрос к корню сайта для получения
-    cookie-сессии, необходимой для преодоления антибот-защиты.
+    global _proxy_url, _session_initialized
+    setup_proxy(_proxy_url if _proxy_url else None)
+    _session_initialized = False
+    socket.setdefaulttimeout(REQUEST_TIMEOUT)
 
-    Args:
-        url (str): Полный URL страницы.
 
-    Returns:
-        str: HTML содержимое страницы в кодировке cp1251.
+def _init_session_once():
+    """Идемпотентно инициализирует cookie-сессию (с double-checked locking).
 
-    Raises:
-        HTTPError: При ошибке HTTP.
-        URLError: При сетевой ошибке.
+    Вызывается перед попыткой загрузки страницы. Если сессия уже инициализирована
+    и не была сброшена (_reset_session), ничего не делает.
     """
     global _session_initialized
-
-    # Перед первым запросом к целевой странице посещаем корень,
-    # чтобы получить необходимые cookie (libex_uid и libex_welcome_here2)
     if not _session_initialized:
         with _session_lock:
             if not _session_initialized:  # double-checked locking
-                _session_initialized = True
+                _session_initialized = True  # пометим до запроса, чтобы не зациклилось
                 root_headers = _get_browser_headers()
-                root_req = Request('https://www.libex.ru/',
-                                   headers=root_headers)
+                root_req = Request('https://www.libex.ru/', headers=root_headers)
                 with urlopen(root_req, timeout=REQUEST_TIMEOUT) as resp:
                     resp.read()  # читаем, но не используем
+
+
+def _fetch_page_once(url):
+    """Одна попытка загрузки страницы (без ретраев).
+
+    Возвращает HTML-строку или выбрасывает HTTPError / URLError.
+    Перед запросом инициализирует cookie-сессию, если её ещё нет.
+    """
+    _init_session_once()
 
     req = Request(url, headers=_get_browser_headers())
     with urlopen(req, timeout=REQUEST_TIMEOUT) as response:
@@ -318,10 +360,75 @@ def fetch_page(url):
             code=403,
             msg='Anti-bot protection triggered. Need valid session.',
             hdrs=getattr(response, 'headers', {}),
-            fp=None
+            fp=None,
         )
 
     return content
+
+
+def fetch_page(url):
+    """Загружает HTML-содержимое страницы с сайта Libex.ru с ретраями.
+
+    Выполняет предварительный запрос к корню сайта для получения
+    cookie-сессии, необходимой для преодоления антибот-защиты.
+
+    Временные сетевые сбои (Connection reset / Connection refused / таймаут)
+    и временные HTTP-коды (403/429/5xx) повторяются с экспоненциальной
+    задержкой (MAX_RETRIES попыток всего). Перед каждой повторной попыткой
+    cookie-сессия пересоздаётся — это лечит "протухшие" сессии на долгих прогонах
+    и антибот-срабатывания.
+
+    Args:
+        url (str): Полный URL страницы.
+
+    Returns:
+        str: HTML содержимое страницы в кодировке cp1251.
+
+    Raises:
+        HTTPError: При устойчивой ошибке HTTP (например, 404 — страница не существует).
+        URLError: При устойчивой сетевой ошибке (после всех повторных попыток).
+    """
+    last_exc = None
+    for attempt in range(1, MAX_RETRIES + 1):
+        try:
+            return _fetch_page_once(url)
+        except HTTPError as e:
+            last_exc = e
+            # 404 и прочие "настоящие" ошибки не ретраим — это не временный сбой.
+            if e.code not in RETRYABLE_HTTP_CODES:
+                raise
+        except (URLError, ConnectionResetError, socket.timeout, OSError) as e:
+            last_exc = e
+            # e.reason для ConnectionResetError это сам объект; берём понятное описание
+            reason = getattr(e, 'reason', e)
+        except Exception as e:  # noqa: BLE001 — маловероятная неожиданность
+            last_exc = e
+            reason = e
+            print(f'    [fetch_page] неожиданная ошибка: {e!r}', file=sys.stderr)
+            raise
+
+        # Повторять только если остались попытки
+        if attempt >= MAX_RETRIES:
+            break
+
+        # Экспоненциальная задержка с джиттером: 3 -> 6 -> 12 -> 24 -> 48 (±2)
+        backoff = RETRY_BACKOFF_BASE * (2 ** (attempt - 1))
+        delay = backoff + random.uniform(0, RETRY_BACKOFF_JITTER)
+        print(
+            f'    [Сбой] попытка {attempt}/{MAX_RETRIES} не удалась '
+            f'({getattr(last_exc, "reason", last_exc)}). '
+            f'Обновляю сессию и повторю через {delay:.1f}с...',
+            file=sys.stderr,
+        )
+
+        # Перед следующим повтором — свежая cookie-сессия.
+        _reset_session()
+        time.sleep(delay)
+
+    # Все попытки исчерпаны
+    if isinstance(last_exc, HTTPError):
+        raise last_exc
+    raise last_exc
 def parse_libex_html(file_path):
     """
     Парсит локальный HTML файл Libex и извлекает список книг + информацию о пагинации.
@@ -429,6 +536,10 @@ def crawl_libex(base_url, start_page=0, end_page=None, max_pages=None,
     all_books = []
     total_pages_known = None
     fetched_pages = 0
+    failed_pages = []  # страницы, которые не удалось загрузить после всех ретраев (пропущены)
+    # Индекс текущей страницы в page_range (растёт при каждом проходе, даже при пропуске).
+    # Отдельно от fetched_pages, который считает только успешно загруженные.
+    fetch_index = 0
 
     # Определяем путь для чекпоинта: если не задан явно, формируем из output_path
     if save_every and save_every > 0:
@@ -485,11 +596,11 @@ def crawl_libex(base_url, start_page=0, end_page=None, max_pages=None,
         # Определяем следующую страницу для загрузки
         if pages_to_fetch is not None:
             # Режим по списку страниц
-            if fetched_pages >= len(pages_to_fetch):
+            if fetch_index >= len(pages_to_fetch):
                 break
-            page = pages_to_fetch[fetched_pages]
-            
-            # Проверяем max_pages
+            page = pages_to_fetch[fetch_index]
+
+            # Проверяем max_pages (по успешно загруженным страницам)
             if max_pages is not None and fetched_pages >= max_pages:
                 break
         else:
@@ -513,13 +624,29 @@ def crawl_libex(base_url, start_page=0, end_page=None, max_pages=None,
         try:
             content = fetch_page(url)
         except HTTPError as e:
-            print(f'[Ошибка HTTP {e.code}] на странице {page + 1}: {url}',
+            failed_pages.append((page + 1, url, f'HTTP {e.code}'))
+            print(f'[Пропуск] страница {page + 1} не загрузилась после '
+                  f'{MAX_RETRIES} попыток (HTTP {e.code}), пропускаю и продолжаю.',
                   file=sys.stderr)
-            break
+            if pages_to_fetch is not None:
+                fetch_index += 1
+            else:
+                page += 1
+            if delay > 0:
+                time.sleep(delay)
+            continue
         except URLError as e:
-            print(f'[Сетевая ошибка] на странице {page + 1}: {e.reason}',
+            failed_pages.append((page + 1, url, str(e.reason)))
+            print(f'[Пропуск] страница {page + 1} не загрузилась после '
+                  f'{MAX_RETRIES} попыток ({e.reason}), пропускаю и продолжаю.',
                   file=sys.stderr)
-            break
+            if pages_to_fetch is not None:
+                fetch_index += 1
+            else:
+                page += 1
+            if delay > 0:
+                time.sleep(delay)
+            continue
 
         books = extract_books_from_html(content)
         pagination = extract_pagination_info(content)
@@ -558,6 +685,7 @@ def crawl_libex(base_url, start_page=0, end_page=None, max_pages=None,
             break
 
         page = next_page
+        fetch_index += 1
 
         # Задержка между запросами
         if delay > 0:
@@ -572,6 +700,13 @@ def crawl_libex(base_url, start_page=0, end_page=None, max_pages=None,
         except OSError as e:
             print(f'[Финал] Не удалось сохранить {detail_urls_path}: {e}',
                   file=sys.stderr)
+
+    # Итоговый отчёт о пропущенных страницах
+    if failed_pages:
+        print(f'[Итог] Пропущено страниц из-за сбоев: {len(failed_pages)}',
+              file=sys.stderr)
+        for pg, u, reason in failed_pages:
+            print(f'    пропущена страница {pg}: {reason} ({u})', file=sys.stderr)
 
     return all_books
 def save_to_json(books, output_path):
@@ -691,9 +826,10 @@ def main():
              '(по умолчанию: <output>_checkpoint.json).'
     )
     parser.add_argument(
-        '--detail-urls-path',
+        '--detail-urls-path', '-t', '--txt',
         type=str,
-        default='special1337.txt',
+        default='polit4587.txt',
+        #default='special1337.txt',
         #default='kultura3489.txt',
         #default='hobbbi527',
         #default='mistik913',
@@ -704,7 +840,7 @@ def main():
 
         help='Путь к текстовому файлу со списком detail_url '
              '(обновляется при каждом чекпоинте и в самом конце, '
-             'по умолчанию: libex6000.txt).'
+             'по умолчанию: special1337.txt).'
     )
     parser.add_argument(
         '--quiet',

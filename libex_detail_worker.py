@@ -47,8 +47,8 @@ _file_lock = threading.Lock()
 # ── Глобальный rate limiter ──
 _request_lock = threading.Lock()
 _last_request_time = 0.0
-MIN_DELAY = 1.0   # минимальная задержка между запросами (сек)
-MAX_DELAY = 3.0   # максимальная задержка между запросами (сек)
+MIN_DELAY = 7.0   # минимальная задержка между запросами (сек)
+MAX_DELAY = 12.0   # максимальная задержка между запросами (сек)
 
 
 def extract_book_id(url):

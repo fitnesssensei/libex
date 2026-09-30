@@ -1,0 +1,83 @@
+#!/bin/bash
+# vpn-run — запускает Python-скрипт с патчем для работы через OpenVPN.
+#
+# Использование:
+#   ./vpn-run libex_parser.py --online --page-range "1-50"
+#   ./vpn-run libex_detail_worker.py detail.txt --threads 10
+#   ./vpn-run любой_скрипт.py [аргументы...]
+#
+# Что делает:
+#   1. Проверяет, что OpenVPN запущен (ищет интерфейс utun)
+#   2. Загружает vpn_patch.py (форсирует IPv4 + таймаут 60с + retry)
+#   3. Запускает переданный скрипт с его аргументами
+#   4. Исходный скрипт НЕ изменяется
+
+set -e
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+PATCH_FILE="$SCRIPT_DIR/vpn_patch.py"
+
+# ── Проверка: запущен ли OpenVPN ──
+if ! ifconfig 2>/dev/null | grep -q 'utun'; then
+    echo "╔═══════════════════════════════════════════════════════════════╗"
+    echo "║  ⚠️  OpenVPN не обнаружен!                                  ║"
+    echo "║  Не найден интерфейс utun (виртуальный туннель OpenVPN).   ║"
+    echo "║                                                             ║"
+    echo "║  Подключите OpenVPN и попробуйте снова:                     ║"
+    echo "║    sudo openvpn --config /путь/к/конфигу.ovpn &             ║"
+    echo "╚═══════════════════════════════════════════════════════════════╝"
+    exit 1
+fi
+
+# ── Проверка: существует ли файл патча ──
+if [ ! -f "$PATCH_FILE" ]; then
+    echo "╔═══════════════════════════════════════════════════════════════╗"
+    echo "║  ❌ Файл патча не найден:                                    ║"
+    echo "║     $PATCH_FILE                                             ║"
+    echo "║     Поместите vpn_patch.py рядом с vpn-run                   ║"
+    echo "╚═══════════════════════════════════════════════════════════════╝"
+    exit 1
+fi
+
+echo "╔═══════════════════════════════════════════════════════════════╗"
+echo "║  ✅ OpenVPN обнаружен (интерфейс utun активен)               ║"
+echo "║  📦 Патч загружен: IPv4 форсирован, таймаут ≥60с, retry 3×  ║"
+echo "║  🚀 Запуск: $*                                              ║"
+echo "╚═══════════════════════════════════════════════════════════════╝"
+
+# ── Запуск с патчем ──
+# Механизм:
+#   1. python3 -c "..." — выполняет скрипт из строки
+#   2. В этом скрипте импортируется vpn_patch (применяет патчи)
+#   3. runpy.run_path() выполняет целевой скрипт как __main__
+#   4. sys.argv правильно передаётся в целевой скрипт
+exec python3 -c "
+import sys
+import os
+
+# Добавляем директорию с vpn_patch.py в путь
+sys.path.insert(0, '$SCRIPT_DIR')
+
+# Применяем патч
+import vpn_patch
+
+# Убираем 'python3' или 'python' из начала аргументов, если есть
+args = sys.argv[1:]
+if args and os.path.basename(args[0]) in ('python3', 'python'):
+    args = args[1:]
+
+if not args:
+    print('[vpn-run] Ошибка: не указан скрипт для запуска.', file=sys.stderr)
+    print('  Использование: ./vpn-run script.py [аргументы...]', file=sys.stderr)
+    sys.exit(1)
+
+# Настраиваем sys.argv для целевого скрипта:
+#   sys.argv[0] = путь к скрипту
+#   sys.argv[1:] = аргументы
+target_script = args[0]
+sys.argv = args  # sys.argv = [target_script, arg1, arg2, ...]
+
+# Запускаем целевой скрипт
+import runpy
+runpy.run_path(target_script, run_name='__main__')
+" "$@"
